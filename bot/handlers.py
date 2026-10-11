@@ -2,6 +2,7 @@
 """Telegram handlers for ELITA Finance."""
 
 import logging
+import re
 
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.error import Conflict, NetworkError, TimedOut
