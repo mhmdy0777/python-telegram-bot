@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     id BIGSERIAL PRIMARY KEY,
     telegram_id BIGINT NOT NULL,
     account_type TEXT NOT NULL
-        CHECK (account_type IN ('company', 'personal')),
+        CHECK (account_type IN ('company', 'personal', 'accountable')),
+
     transaction_type TEXT NOT NULL
         CHECK (transaction_type IN ('expense', 'income')),
     amount BIGINT NOT NULL CHECK (amount > 0),
