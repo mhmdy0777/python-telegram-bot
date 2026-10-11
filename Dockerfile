@@ -18,3 +18,4 @@ RUN useradd --create-home appuser
 
 USER appuser
 CMD ["python", "-m", "bot.main"]
+
