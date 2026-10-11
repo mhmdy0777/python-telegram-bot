@@ -47,11 +47,22 @@ async def create_pool(dsn: str) -> asyncpg.Pool:
         max_size=POOL_MAX_SIZE,
         command_timeout=COMMAND_TIMEOUT,
     )
-    async with pool.acquire() as conn:
-        await conn.execute(CREATE_USERS_TABLE)
-        await conn.execute(CREATE_TRANSACTIONS_TABLE)
-    logger.info("PostgreSQL tables ready.")
-    return pool
+    
+async with pool.acquire() as conn:
+    await conn.execute(CREATE_USERS_TABLE)
+    await conn.execute(CREATE_TRANSACTIONS_TABLE)
+
+    await conn.execute("""
+        ALTER TABLE transactions
+        DROP CONSTRAINT IF EXISTS transactions_account_type_check;
+    """)
+
+    await conn.execute("""
+        ALTER TABLE transactions
+        ADD CONSTRAINT transactions_account_type_check
+        CHECK (account_type IN ('company', 'personal', 'accountable'));
+    """)
+
 async def upsert_user(
     pool: asyncpg.Pool,
     telegram_id: int,
