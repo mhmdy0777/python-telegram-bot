@@ -1,5 +1,5 @@
 
-"""Telegram handlers for ELITA Finance."""
+"""Handlers for ELITA Finance."""
 
 import logging
 import re
@@ -22,43 +22,38 @@ DB_KEY = "db"
 REDIS_KEY = "redis"
 
 BOT_COMMANDS = (
-    ("start", "Open ELITA Finance"),
-    ("help", "Show commands"),
-    ("about", "About the bot"),
-    ("ping", "Check bot status"),
-    ("expense", "Record an expense"),
-    ("income", "Record incoming money"),
-    ("balance", "Show account balances"),
-    ("report", "Show monthly report"),
+    ("start", "Главное меню"),
+    ("expense", "Записать расход"),
+    ("income", "Записать приход"),
+    ("balance", "Показать баланс"),
+    ("report", "Отчёт за месяц"),
 )
 
-MENU_HELP = "Help"
-MENU_ABOUT = "About"
-MENU_PING = "Ping"
+MENU_EXPENSE = "💸 Расход"
+MENU_INCOME = "💰 Приход"
+MENU_BALANCE = "💳 Баланс"
+MENU_REPORT = "📊 Отчёт за месяц"
+MENU_ACCOUNTABLE = "🧾 Подотчёт"
 
 MAIN_MENU_KEYBOARD = ReplyKeyboardMarkup(
-    [[MENU_HELP, MENU_ABOUT], [MENU_PING]],
+    [
+        [MENU_EXPENSE, MENU_INCOME],
+        [MENU_BALANCE, MENU_REPORT],
+        [MENU_ACCOUNTABLE],
+    ],
     resize_keyboard=True,
     is_persistent=True,
 )
 
-HELP_TEXT = """ELITA Finance — expense tracking
-
-Commands:
-/expense company 90000 gas
-/expense personal 150000 fuel
-/income company 3000000 advance
-/balance
-/report
-/help
-
-Amounts are entered in Uzbek soums.
-Use company for company accountable funds
-and personal for personal money.
-
-Example:
-/expense company 90000 gas methane
-"""
+HELP_TEXT = (
+    "Добро пожаловать в ELITA Finance! 👋\n\n"
+    "Выбери нужный раздел кнопками ниже.\n\n"
+    "Примеры операций:\n"
+    "Расход компании 90 000 сум на газ\n"
+    "Компания получила 3 000 000 сум\n"
+    "Личные расходы 50 000 сум на бензин\n\n"
+    "Все суммы указывай в сумах."
+)
 
 
 def get_pool(context: ContextTypes.DEFAULT_TYPE):
@@ -66,7 +61,11 @@ def get_pool(context: ContextTypes.DEFAULT_TYPE):
 
 
 def account_label(account: str) -> str:
-    return "Company" if account == "company" else "Personal"
+    return {
+        "company": "Компания",
+        "personal": "Личные деньги",
+        "accountable": "Подотчёт",
+    }.get(account, account)
 
 
 async def start(
@@ -74,6 +73,7 @@ async def start(
 ) -> None:
     message = update.effective_message
     user = update.effective_user
+
     if message is None or user is None:
         return
 
@@ -84,7 +84,7 @@ async def start(
         )
 
     await message.reply_text(
-        "Welcome to ELITA Finance!\n\n" + HELP_TEXT,
+        HELP_TEXT,
         reply_markup=MAIN_MENU_KEYBOARD,
     )
 
@@ -94,7 +94,10 @@ async def help_command(
 ) -> None:
     del context
     if update.effective_message:
-        await update.effective_message.reply_text(HELP_TEXT)
+        await update.effective_message.reply_text(
+            HELP_TEXT,
+            reply_markup=MAIN_MENU_KEYBOARD,
+        )
 
 
 async def about(
@@ -103,7 +106,8 @@ async def about(
     del context
     if update.effective_message:
         await update.effective_message.reply_text(
-            "ELITA Finance tracks company and personal income and expenses."
+            "ELITA Finance — учёт расходов, поступлений "
+            "и денежных остатков."
         )
 
 
@@ -116,12 +120,13 @@ async def ping(
 
     client = context.bot_data.get(REDIS_KEY)
     if client is None:
-        await message.reply_text("Bot is running.")
+        await message.reply_text("Бот работает.")
         return
 
     cached = await cache.get_or_set_ping(client)
     await message.reply_text(
-        "Bot is running." if cached else "Bot is running (fresh check)."
+        "Бот работает." if cached
+        else "Бот работает. Проверка выполнена."
     )
 
 
@@ -138,44 +143,51 @@ async def record_transaction(
 
     pool = get_pool(context)
     if pool is None:
-        await message.reply_text(
-            "Database is unavailable. Please try again later."
-        )
+        await message.reply_text("База данных недоступна.")
         return
 
     args = context.args
     if len(args) < 3:
-        command = "expense" if transaction_type == "expense" else "income"
+        command = (
+            "expense" if transaction_type == "expense"
+            else "income"
+        )
         await message.reply_text(
-            f"Format: /{command} company 90000 category description\n"
-            f"Or: /{command} personal 90000 category description"
+            f"Формат: /{command} company 90000 gas описание\n"
+            f"Или: /{command} personal 50000 fuel описание\n"
+            f"Счёт подотчёта: accountable"
         )
         return
 
     account_type = args[0].lower()
-
-    if account_type not in ("company", "personal"):
+    if account_type not in (
+        "company", "personal", "accountable"
+    ):
         await message.reply_text(
-            "Account must be company or personal."
+            "Счёт: company, personal или accountable."
         )
         return
 
     try:
-        amount = int(args[1].replace(",", "").replace("_", ""))
+        amount = int(
+            args[1].replace(",", "").replace("_", "")
+        )
     except ValueError:
         await message.reply_text(
-            "Amount must be a whole number, e.g. 90000."
+            "Укажи сумму целым числом, например 90000."
         )
         return
 
     if amount <= 0:
-        await message.reply_text("Amount must be greater than zero.")
+        await message.reply_text(
+            "Сумма должна быть больше нуля."
+        )
         return
 
     category = args[2].strip()
     description = " ".join(args[3:]).strip()
 
-    transaction_id = await db.add_transaction(
+    operation_id = await db.add_transaction(
         pool=pool,
         telegram_id=user.id,
         account_type=account_type,
@@ -185,17 +197,25 @@ async def record_transaction(
         description=description,
     )
 
-    kind = "Expense recorded" if transaction_type == "expense" else "Income recorded"
-    balance = await db.get_balance(pool, user.id, account_type)
+    balance_value = await db.get_balance(
+        pool, user.id, account_type
+    )
+
+    kind = (
+        "Расход записан"
+        if transaction_type == "expense"
+        else "Приход записан"
+    )
 
     await message.reply_text(
-        f"{kind} successfully.\n"
-        f"Account: {account_label(account_type)}\n"
-        f"Amount: {amount:,} UZS\n"
-        f"Category: {category}\n"
-        f"Description: {description or '-'}\n"
-        f"Current balance: {balance:,} UZS\n"
-        f"Operation ID: {transaction_id}"
+        f"{kind}.\n"
+        f"Счёт: {account_label(account_type)}\n"
+        f"Сумма: {amount:,} сум\n"
+        f"Категория: {category}\n"
+        f"Описание: {description or '-'}\n"
+        f"Баланс счёта: {balance_value:,} сум\n"
+        f"Номер операции: {operation_id}",
+        reply_markup=MAIN_MENU_KEYBOARD,
     )
 
 
@@ -216,21 +236,31 @@ async def balance(
 ) -> None:
     message = update.effective_message
     user = update.effective_user
+
     if message is None or user is None:
         return
 
     pool = get_pool(context)
     if pool is None:
-        await message.reply_text("Database is unavailable.")
+        await message.reply_text("База данных недоступна.")
         return
 
-    company = await db.get_balance(pool, user.id, "company")
-    personal = await db.get_balance(pool, user.id, "personal")
+    company = await db.get_balance(
+        pool, user.id, "company"
+    )
+    personal = await db.get_balance(
+        pool, user.id, "personal"
+    )
+    accountable = await db.get_balance(
+        pool, user.id, "accountable"
+    )
 
     await message.reply_text(
-        "BALANCE\n\n"
-        f"Company: {company:,} UZS\n"
-        f"Personal: {personal:,} UZS"
+        "💳 БАЛАНС\n\n"
+        f"Компания: {company:,} сум\n"
+        f"Личные деньги: {personal:,} сум\n"
+        f"Подотчётный счёт: {accountable:,} сум",
+        reply_markup=MAIN_MENU_KEYBOARD,
     )
 
 
@@ -239,6 +269,7 @@ async def report(
 ) -> None:
     message = update.effective_message
     user = update.effective_user
+
     if message is None or user is None:
         return
 
@@ -250,14 +281,10 @@ async def report(
     rows = await db.get_report(pool, user.id)
     if not rows:
         await message.reply_text(
-            "За этот месяц операций пока нет."
+            "За этот месяц операций пока нет.",
+            reply_markup=MAIN_MENU_KEYBOARD,
         )
         return
-
-    lines = ["ОТЧЁТ ЗА МЕСЯЦ", ""]
-
-    total_expense = 0
-    total_income = 0
 
     account_names = {
         "company": "Компания",
@@ -281,11 +308,15 @@ async def report(
         "прочее": "Прочее",
     }
 
+    lines = ["📊 ОТЧЁТ ЗА МЕСЯЦ", ""]
+    total_expense = 0
+    total_income = 0
+
     for row in rows:
         account = account_names.get(
-            row["account_type"], str(row["account_type"])
+            row["account_type"],
+            str(row["account_type"]),
         )
-
         kind = row["transaction_type"]
         amount = int(row["total"])
         category = str(row["category"])
@@ -301,7 +332,6 @@ async def report(
             total_income += amount
 
         amount_text = f"{amount:,}".replace(",", " ")
-
         lines.append(
             f"{account} | {kind_label}\n"
             f"  {category}: {amount_text} сум "
@@ -310,15 +340,19 @@ async def report(
 
     lines.extend([
         "",
-        f"Всего приход: {total_income:,}".replace(",", " ")
-        + " сум",
-        f"Всего расход: {total_expense:,}".replace(",", " ")
-        + " сум",
-        f"Разница: {total_income - total_expense:,}".replace(",", " ")
+        f"Всего приход: "
+        f"{total_income:,}".replace(",", " ") + " сум",
+        f"Всего расход: "
+        f"{total_expense:,}".replace(",", " ") + " сум",
+        f"Разница: "
+        f"{total_income - total_expense:,}".replace(",", " ")
         + " сум",
     ])
 
-    await message.reply_text("\n".join(lines))
+    await message.reply_text(
+        "\n".join(lines),
+        reply_markup=MAIN_MENU_KEYBOARD,
+    )
 
 
 async def menu_button(
@@ -328,12 +362,31 @@ async def menu_button(
     if message is None or not message.text:
         return
 
-    if message.text.strip() == MENU_HELP:
-        await help_command(update, context)
-    elif message.text.strip() == MENU_ABOUT:
-        await about(update, context)
-    elif message.text.strip() == MENU_PING:
-        await ping(update, context)
+    text = message.text.strip()
+
+    if text == MENU_BALANCE:
+        await balance(update, context)
+    elif text == MENU_REPORT:
+        await report(update, context)
+    elif text == MENU_EXPENSE:
+        await message.reply_text(
+            "Напиши расход, например:\n"
+            "Расход компании 90 000 сум на газ\n"
+            "Личные расходы 50 000 сум на бензин"
+        )
+    elif text == MENU_INCOME:
+        await message.reply_text(
+            "Напиши поступление, например:\n"
+            "Компания получила 3 000 000 сум\n"
+            "Получил 500 000 сум личных денег"
+        )
+    elif text == MENU_ACCOUNTABLE:
+        await message.reply_text(
+            "🧾 ПОДОТЧЁТ\n\n"
+            "Раздел подготовлен для дальнейшей настройки.\n"
+            "Выдача под отчёт, расходы и возвраты "
+            "пока не реализованы полностью."
+        )
 
 
 async def text_message(
@@ -348,20 +401,22 @@ async def text_message(
     text = message.text.strip()
     lower = text.lower()
 
-    # Natural-language balance and report requests.
-    if any(word in lower for word in ("баланс", "остаток денег", "сколько осталось")):
+    if any(word in lower for word in (
+        "баланс", "остаток денег", "сколько осталось"
+    )):
         await balance(update, context)
         return
 
-    if any(word in lower for word in ("отчёт", "отчет", "за месяц", "расходы за месяц")):
+    if any(word in lower for word in (
+        "отчёт", "отчет", "за месяц", "расходы за месяц"
+    )):
         await report(update, context)
         return
 
-    # Find an amount such as 90000, 90 000 or 90,000.
     match = re.search(r"(?<!\d)\d[\d ,]*(?!\d)", text)
     if not match:
         await message.reply_text(
-            "Не нашёл сумму. Напиши, например: "
+            "Не нашёл сумму. Пример: "
             "«Расход компании 90 000 сум на газ»."
         )
         return
@@ -373,39 +428,53 @@ async def text_message(
 
     amount = int(amount_text)
     if amount <= 0:
-        await message.reply_text("Сумма должна быть больше нуля.")
+        await message.reply_text(
+            "Сумма должна быть больше нуля."
+        )
         return
 
-    # Determine the account. Never guess when it is ambiguous.
     company_words = (
-        "компан", "подотч", "служебн", "учебн", "автомакт",
-        "корпоратив", "рабочая машина", "рабочую машину"
+        "компан", "служебн", "учебн", "автомакт",
+        "корпоратив", "рабочая машина", "рабочую машину",
     )
     personal_words = (
-        "личн", "свои деньги", "мои деньги", "личных денег"
+        "личн", "свои деньги", "мои деньги",
+        "личных денег",
+    )
+    accountable_words = (
+        "подотчёт", "подотчет", "из подотчёта",
+        "из подотчета",
     )
 
+    is_accountable = any(
+        word in lower for word in accountable_words
+    )
     is_company = any(word in lower for word in company_words)
     is_personal = any(word in lower for word in personal_words)
 
-    if is_company and is_personal:
+    if is_accountable:
+        account_type = "accountable"
+    elif is_company and is_personal:
         await message.reply_text(
-            "Уточни, пожалуйста: это деньги компании или личные?"
+            "Уточни, пожалуйста: компания или личные деньги?"
         )
         return
-
-    if not is_company and not is_personal:
+    elif is_company:
+        account_type = "company"
+    elif is_personal:
+        account_type = "personal"
+    else:
         await message.reply_text(
             "Уточни, за какой счёт операция:\n"
-            "Напиши «компания» или «личные деньги»."
+            "Напиши «компания», «личные деньги» "
+            "или «подотчёт»."
         )
         return
 
-    account_type = "company" if is_company else "personal"
-
     income_words = (
-        "получил", "получила", "выдали", "поступил", "поступили",
-        "внес", "внёс", "пополнение", "приход", "вернули деньги"
+        "получил", "получила", "выдали", "поступил",
+        "поступили", "внес", "внёс", "пополнение",
+        "приход", "вернули деньги",
     )
     transaction_type = (
         "income"
@@ -413,7 +482,6 @@ async def text_message(
         else "expense"
     )
 
-    # Infer a simple category from common Russian words.
     categories = {
         "газ": "Газ",
         "метан": "Газ",
@@ -424,21 +492,21 @@ async def text_message(
         "аренд": "Аренда",
         "зарплат": "Зарплата",
         "штраф": "Штраф",
-        "ед": "Питание",
         "обед": "Питание",
         "канц": "Канцтовары",
-        "аванс": "Подотчётные средства",
     }
+
     category = next(
-        (value for word, value in categories.items() if word in lower),
+        (
+            value for word, value in categories.items()
+            if word in lower
+        ),
         "Прочее",
     )
 
-    pool = context.bot_data.get(DB_KEY)
+    pool = get_pool(context)
     if pool is None:
-        await message.reply_text(
-            "База данных недоступна. Попробуй позже."
-        )
+        await message.reply_text("База данных недоступна.")
         return
 
     operation_id = await db.add_transaction(
@@ -462,14 +530,14 @@ async def text_message(
     )
 
     await message.reply_text(
-        f"{operation_name}.\n"
-        f"Счёт: {'Компания' if account_type == 'company' else 'Личный'}\n"
+        f"✅ {operation_name}\n"
+        f"Счёт: {account_label(account_type)}\n"
         f"Сумма: {amount:,} сум\n"
         f"Категория: {category}\n"
-        f"Баланс: {current_balance:,} сум\n"
-        f"Номер операции: {operation_id}"
+        f"Баланс счёта: {current_balance:,} сум\n"
+        f"Номер операции: {operation_id}",
+        reply_markup=MAIN_MENU_KEYBOARD,
     )
-
 
 
 async def unknown_command(
@@ -478,7 +546,7 @@ async def unknown_command(
     del context
     if update.effective_message:
         await update.effective_message.reply_text(
-            "Unknown command. Type /help."
+            "Неизвестная команда. Нажми /start."
         )
 
 
@@ -488,18 +556,18 @@ async def error_handler(
     error = context.error
 
     if isinstance(error, (Conflict, NetworkError, TimedOut)):
-        logger.warning("Transient Telegram error: %s", error)
+        logger.warning("Временная ошибка Telegram: %s", error)
         return
 
     logger.exception(
-        "Error while processing update: %s",
+        "Ошибка при обработке сообщения: %s",
         update,
         exc_info=error,
     )
 
     if isinstance(update, Update) and update.effective_message:
         await update.effective_message.reply_text(
-            "An error occurred. Please try again."
+            "Произошла ошибка. Попробуй ещё раз."
         )
 
 
@@ -516,15 +584,33 @@ def register_handlers(application: Application) -> None:
     application.add_handler(CommandHandler("income", income))
     application.add_handler(CommandHandler("balance", balance))
     application.add_handler(CommandHandler("report", report))
-    application.add_handler(
-        MessageHandler(filters.COMMAND, unknown_command)
+
+    menu_pattern = (
+        r"^(💸 Расход|💰 Приход|💳 Баланс|"
+        r"📊 Отчёт за месяц|🧾 Подотчёт)$"
     )
+
     application.add_handler(
         MessageHandler(
-            filters.Regex(f"^({MENU_HELP}|{MENU_ABOUT}|{MENU_PING})$"),
+            filters.Regex(menu_pattern),
             menu_button,
         )
     )
+
     application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, text_message)
+        MessageHandler(
+            filters.COMMAND,
+            unknown_command,
+        )
     )
+
+    application.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            text_message,
+        )
+    )
+
+
+    
+ 
