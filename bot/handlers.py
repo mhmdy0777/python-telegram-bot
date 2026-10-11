@@ -288,13 +288,137 @@ async def menu_button(
 async def text_message(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    if update.effective_message:
-        await update.effective_message.reply_text(
-            "To record an expense, use a command such as:\n"
-            "/expense company 90000 gas\n\n"
-            "For balances, send /balance.\n"
-            "For the monthly report, send /report."
+    message = update.effective_message
+    user = update.effective_user
+
+    if message is None or not message.text or user is None:
+        return
+
+    text = message.text.strip()
+    lower = text.lower()
+
+    # Natural-language balance and report requests.
+    if any(word in lower for word in ("баланс", "остаток денег", "сколько осталось")):
+        await balance(update, context)
+        return
+
+    if any(word in lower for word in ("отчёт", "отчет", "за месяц", "расходы за месяц")):
+        await report(update, context)
+        return
+
+    # Find an amount such as 90000, 90 000 or 90,000.
+    match = re.search(r"(?<!\d)\d[\d ,]*(?!\d)", text)
+    if not match:
+        await message.reply_text(
+            "Не нашёл сумму. Напиши, например: "
+            "«Расход компании 90 000 сум на газ»."
         )
+        return
+
+    amount_text = re.sub(r"[^\d]", "", match.group())
+    if not amount_text:
+        await message.reply_text("Не удалось определить сумму.")
+        return
+
+    amount = int(amount_text)
+    if amount <= 0:
+        await message.reply_text("Сумма должна быть больше нуля.")
+        return
+
+    # Determine the account. Never guess when it is ambiguous.
+    company_words = (
+        "компан", "подотч", "служебн", "учебн", "автомакт",
+        "корпоратив", "рабочая машина", "рабочую машину"
+    )
+    personal_words = (
+        "личн", "свои деньги", "мои деньги", "личных денег"
+    )
+
+    is_company = any(word in lower for word in company_words)
+    is_personal = any(word in lower for word in personal_words)
+
+    if is_company and is_personal:
+        await message.reply_text(
+            "Уточни, пожалуйста: это деньги компании или личные?"
+        )
+        return
+
+    if not is_company and not is_personal:
+        await message.reply_text(
+            "Уточни, за какой счёт операция:\n"
+            "Напиши «компания» или «личные деньги»."
+        )
+        return
+
+    account_type = "company" if is_company else "personal"
+
+    income_words = (
+        "получил", "получила", "выдали", "поступил", "поступили",
+        "внес", "внёс", "пополнение", "приход", "вернули деньги"
+    )
+    transaction_type = (
+        "income"
+        if any(word in lower for word in income_words)
+        else "expense"
+    )
+
+    # Infer a simple category from common Russian words.
+    categories = {
+        "газ": "Газ",
+        "метан": "Газ",
+        "бензин": "Бензин",
+        "топлив": "Топливо",
+        "ремонт": "Ремонт",
+        "масло": "Масло",
+        "аренд": "Аренда",
+        "зарплат": "Зарплата",
+        "штраф": "Штраф",
+        "ед": "Питание",
+        "обед": "Питание",
+        "канц": "Канцтовары",
+        "аванс": "Подотчётные средства",
+    }
+    category = next(
+        (value for word, value in categories.items() if word in lower),
+        "Прочее",
+    )
+
+    pool = context.bot_data.get(DB_KEY)
+    if pool is None:
+        await message.reply_text(
+            "База данных недоступна. Попробуй позже."
+        )
+        return
+
+    operation_id = await db.add_transaction(
+        pool=pool,
+        telegram_id=user.id,
+        account_type=account_type,
+        transaction_type=transaction_type,
+        amount=amount,
+        category=category,
+        description=text,
+    )
+
+    current_balance = await db.get_balance(
+        pool, user.id, account_type
+    )
+
+    operation_name = (
+        "Поступление записано"
+        if transaction_type == "income"
+        else "Расход записан"
+    )
+
+    await message.reply_text(
+        f"{operation_name}.\n"
+        f"Счёт: {'Компания' if account_type == 'company' else 'Личный'}\n"
+        f"Сумма: {amount:,} сум\n"
+        f"Категория: {category}\n"
+        f"Баланс: {current_balance:,} сум\n"
+        f"Номер операции: {operation_id}"
+    )
+
 
 
 async def unknown_command(
