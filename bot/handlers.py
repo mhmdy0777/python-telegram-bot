@@ -244,28 +244,79 @@ async def report(
 
     pool = get_pool(context)
     if pool is None:
-        await message.reply_text("Database is unavailable.")
+        await message.reply_text("База данных недоступна.")
         return
 
     rows = await db.get_report(pool, user.id)
     if not rows:
         await message.reply_text(
-            "No transactions recorded this month."
+            "За этот месяц операций пока нет."
         )
         return
 
-    lines = ["MONTHLY REPORT"]
+    lines = ["ОТЧЁТ ЗА МЕСЯЦ", ""]
+
+    total_expense = 0
+    total_income = 0
+
+    account_names = {
+        "company": "Компания",
+        "personal": "Личные деньги",
+        "accountable": "Подотчёт",
+    }
+
+    category_names = {
+        "gas": "Газ",
+        "газ": "Газ",
+        "бензин": "Бензин",
+        "fuel": "Топливо",
+        "топливо": "Топливо",
+        "repair": "Ремонт",
+        "ремонт": "Ремонт",
+        "salary": "Зарплата",
+        "зарплата": "Зарплата",
+        "rent": "Аренда",
+        "аренда": "Аренда",
+        "other": "Прочее",
+        "прочее": "Прочее",
+    }
+
     for row in rows:
-        account = account_label(row["account_type"])
-        kind = (
-            "Expense"
-            if row["transaction_type"] == "expense"
-            else "Income"
+        account = account_names.get(
+            row["account_type"], str(row["account_type"])
         )
+
+        kind = row["transaction_type"]
+        amount = int(row["total"])
+        category = str(row["category"])
+        category = category_names.get(
+            category.lower(), category
+        )
+
+        if kind == "expense":
+            kind_label = "Расход"
+            total_expense += amount
+        else:
+            kind_label = "Приход"
+            total_income += amount
+
+        amount_text = f"{amount:,}".replace(",", " ")
+
         lines.append(
-            f"{account} | {kind} | {row['category']}: "
-            f"{row['total']:,} UZS ({row['operations']} operations)"
+            f"{account} | {kind_label}\n"
+            f"  {category}: {amount_text} сум "
+            f"(операций: {row['operations']})"
         )
+
+    lines.extend([
+        "",
+        f"Всего приход: {total_income:,}".replace(",", " ")
+        + " сум",
+        f"Всего расход: {total_expense:,}".replace(",", " ")
+        + " сум",
+        f"Разница: {total_income - total_expense:,}".replace(",", " ")
+        + " сум",
+    ])
 
     await message.reply_text("\n".join(lines))
 
